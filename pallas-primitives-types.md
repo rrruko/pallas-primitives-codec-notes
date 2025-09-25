@@ -136,7 +136,69 @@ pub enum Language
 
 This looks right
 
+```
+pub struct CostModels {
+```
 
+Starting in protocol version 9 (i.e. conway) the "lenient" decoder is used.
+Otherwise, the "failing" decoder is used.
+- decodeCostModelsLenient: The cbor object is decoded as a map of Word8 to lists
+  of Int64. Then it is converted to a CostModels record using
+  mkCostModelsLenient. the Word8 map key represents a plutus version and the
+  list of Int64 represents the cost model array for that plutus version. If the
+  key is for a known plutus version (i.e. 1 through 3) it is added to the
+  "valid" cost models map. Otherwise it is added to the "unknown" cost models
+  map. This function can fail if mkEvaluationContext fails for a known plutus
+  version. That function does a lot of really complicated work to build a plutus
+  evaluation context... The evaluation context is then stored in the "CostModel"
+  value of the "known"/"valid" map field of the CostModels record at the
+  corresponding plutus language language key. The number of params for each
+  plutus language version is allowed to vary.
+- decodeCostModelsFailing: The cbor object is decoded as a map of language to
+  list of Int64. If languages after plutus V2 (i.e. plutus V3) are present, the
+  decoder fails. The decoder also fails if the plutus V1 params count is not 166
+  and if the plutus V2 params count is not 175. Like with the lenient decoder,
+  this function can fail if mkEvaluationContext fails for plutus V1 or plutus
+  V2.
+
+For each plutus language version 1 through 3, the plutus library exposes a mkEvaluationContext function which takes an ordered list of cost model params and returns an "EvaluationContext" in a monad bound by the constraint `MonadError CostModelApplyError m`. Here, the monad is instantiated as WriterT Either; it also returns a list of `CostModelApplyWarn` in an abstract writer monad, which we discard (so any warnings produced by mkEvaluationContext do not cause the decoder to fail).
+
+mkEvaluationContext:
+- calls tagWithParamNames, which tags each parameter with the nth ParamName enum
+  variant. This function has a class constraint implying that it can produce a
+  CostModelApplyError but it can never fail. If there are too many or too few
+  params supplied, a warning will be emitted (which we ultimately ignore, as
+  mentioned above). In the latter case, all the missing params are filled in
+  with `maxBound @Int64` to match the number of statically-known param names.
+- After tagging, the enum variants are converted to their textual
+  representations and the list of (ParamName, Int64) pairs is converted to a
+  map.
+- The map is passed to mkDynEvaluationContext along with various configuration
+  options which modify the evaluator semantics depending on the language
+  version. This function calls mkMachineVariantParametersFor, passing in the
+  "semantics variants" and the cost models (name, value) map ("newCMP"). For each
+  "semantics variant", a "CEK cost model" is constructed using
+  cekCostModelForVariant, and then that model is applied to the "newCMP".
+- The params ("newCMP") are split into "machine params" and "builtin params"
+  depending on the presence of the "cekMachineCostsPrefix" in the param name
+  (this is the string literal "cek").  Each half of the params along with the
+  corresponding half of the "CEK cost model" for the variant is passed to
+  `applyParams`.
+- applyParams:
+  - The "model" is converted to json. If this is not a JSON object, an error is
+    produced. This should be impossible from a decoder perspective since the model
+    was produced entirely from the semantic variants defined in mkEvaluationContext.
+  - The values of our params are converted to Aeson `Number`s.
+  - The model values are overwritten with the supplied params. The function
+    produces an error if one of the supplied params is not present in the base
+    model. However, I don't think a failure is possible here via the decoder
+    because tagWithParamNames already truncated our list of values to the
+    expected size and appended the expected ParamNames.
+  - Finally, the resulting json object is decoded back into a CostModel. It
+    should be impossible for this to fail.
+
+So, despite the complexity of mkEvaluationContext, I don't think the decoder can
+actually fail.
 
 ```
 pub struct ProtocolParamUpdate {
@@ -590,7 +652,46 @@ toCBORForMempoolSubmission
         !> E (encodeNullMaybe encCBOR . strictMaybeToMaybe) auxiliaryData
 ```
 
+### pallas-primitives/src/babbage/model.rs
+
+```
+pub struct HeaderBody
+```
+
+I think this corresponds to `data HeaderBody crypto` in ouroboros-consensus
+[here](https://github.com/IntersectMBO/ouroboros-consensus/blob/0107b1e9200ee7d46ce769d85fcfff6e7708c793/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Header.hs#L84).
+
+Codecs are pretty staightforward (`encode $ Rec` and `decode $ RecD`). `mapCoder unCBORGroup From` is used for the ocert field. 
+
+```
+pub struct OperationalCert
+```
+
+Typical "record" codec. 
+
+```
+pub struct Header
+```
+
+This is `data HeaderRaw crypto` in ouroboros-consensus. Typical "record" codec.
+
+
+
+
+
 ### pallas-primitives/src/alonzo/model.rs
+
+```
+pub struct HeaderBody
+```
+
+I think this corresponds to `data BHBody c` in cardano-protocol-tpraos. Decoder
+uses `decodeRecordNamed`. The `operational_cert_*` fields and the protocol
+version fields are flattened in the struct using EncCBORGroup/DecCBORGroup...
+
+
+
+
 
 ```
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
