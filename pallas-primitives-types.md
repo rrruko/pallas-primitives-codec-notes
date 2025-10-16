@@ -134,7 +134,18 @@ constructors. Should write tests for this.
 pub enum Language
 ```
 
-This looks right
+This matches the definition of the `Language` type in the ledger code, although
+it is not actually used in pallas. The `Language` type, meanwhile, is used for
+map keys of the `atadrPlutus` field of `AlonzoTxAuxDataRaw`. In pallas, we use a
+separate optional field for each of the three plutus language versions instead
+of a map.
+
+In cardano-ledger there is one Language type that contains PlutusV1, PlutusV2,
+and PlutusV3. It is not indexed by era. `guardPlutus` is used in some decoders
+(actually, only in the `AlonzoTxAuxDataRaw` decoder) to fail when a language
+"from the future" is encountered (by casing on the protocol version in the
+decoder context).
+
 
 ```
 pub struct CostModels {
@@ -205,6 +216,7 @@ pub struct ProtocolParamUpdate {
 ```
 
 It's a little hard to follow the logic in the cardano-ledger implementation...
+The type is `data ConwayPParams f era` with `f` instantiated to `StrictMaybe`.
 There is a field for "protocol version" in the parametric haskell type which is
 not present here, but it is of type HKDNoUpdate which makes it isomorphic to
 unit (`()`) in an update context.
@@ -577,8 +589,7 @@ PlutusScript if the version is legal in the current era.
 pub struct Block<'b>
 ```
 
-I think this is not meant to correspond directly to the haskell node's block
-representation:
+This corresponds to the following type:
 
 ```
 data Block h era
@@ -589,6 +600,41 @@ data Block h era
 The fields here are: the header, the transactions, and the encoded bytes of
 the block. (The `h` parameter is usually instantiated as either
 `BHeader (EraCrypto era)` or `BHeaderView (EraCrypto era)`.)
+
+The `TxSeq` type resolves (in conway era) to `AlonzoTxSeq`:
+
+```
+data AlonzoTxSeq era = AlonzoTxSeqRaw
+  { txSeqTxns :: !(StrictSeq (Tx era))
+  , txSeqBodyBytes :: BSL.ByteString
+  -- ^ Bytes encoding @Seq ('AlonzoTxBody' era)@
+  , txSeqWitsBytes :: BSL.ByteString
+  -- ^ Bytes encoding @Seq ('TxWitness' era)@
+  , txSeqMetadataBytes :: BSL.ByteString
+  -- ^ Bytes encoding a @Map Int ('AuxiliaryData')@. Missing indices have
+  -- 'SNothing' for metadata
+  , txSeqIsValidBytes :: BSL.ByteString
+  -- ^ Bytes representing a set of integers. These are the indices of
+  -- transactions with 'isValid' == False.
+  }
+  deriving (Generic)
+```
+
+Note that this type contains the bodies, followed by the witness sets, the
+auxiliary datas, and the invalid transactions (though these are stored as
+raw bytes). However, even though they are stored as raw bytes, they are decoded
+as strongly-typed fields (`Seq (TxBody era)`, `Seq (TxWits era)`, `TxAuxData era`,
+and `Seq IsValid`.)
+
+Also, the full transactions are stored. The decoder for this type
+works by decoding the sequence of bodies, then the sequence of witness sets,
+then the map of auxiliary data sets, then the sequence of invalid transaction
+indices. The decoder checks for the following invariants:
+- The auxiliary data indices point at valid items in the body array
+- The number of witness sets matches the number of bodies
+- The invalid tx indices point at valid items in the body array
+Finally, the decoder zips together the sections of the transactions to form the
+memoized sequence of `Tx era` in the first field.
 
 
 
@@ -663,11 +709,15 @@ I think this corresponds to `data HeaderBody crypto` in ouroboros-consensus
 
 Codecs are pretty staightforward (`encode $ Rec` and `decode $ RecD`). `mapCoder unCBORGroup From` is used for the ocert field. 
 
+
+
 ```
 pub struct OperationalCert
 ```
 
 Typical "record" codec. 
+
+
 
 ```
 pub struct Header
@@ -677,7 +727,162 @@ This is `data HeaderRaw crypto` in ouroboros-consensus. Typical "record" codec.
 
 
 
+```
+pub enum Language
+```
 
+Matches the behavior of the `Language` type in babbage era; see notes on
+corresponding conway type.
+
+
+
+```
+pub struct CostModels
+```
+
+See conway notes; basically, the pallas decoder does not validate the
+lengths of the costmodel arrays, unlike the haskell decoder.
+
+
+
+```
+pub struct ProtocolParamUpdate
+```
+
+Looks right. Corresponds to `data BabbagePParams f era` with `f` instantiated to
+`StrictMaybe`. Fields 12, 13, and 15 were in older protocols but were removed.
+Field 14 is removed in conway and later.
+
+
+
+```
+pub struct Update
+```
+
+This is the type of the update field (#6) of tx body. `data Update era` is
+defined in Shelley.PParams. It is encoded as a typical record of two items with
+decode . RecD. The types of the fields are `ProposedPPUpdates era` and
+`EpochNo`. The former type is a newtype for a map of key hash to PParamsUpdate,
+which itself is a newtype wrapper for `PParamsHKD StrictMaybe era`, which is
+equivalent to the `BabbagePParams StrictMaybe era` type corresponding to
+ProtocolParamUpdate.
+
+
+
+```
+pub struct TransactionBody<'b> {
+```
+
+The inputs, collateral inputs, reference inputs, and required signers are all
+`Set`s in cardano-ledger but `Vec`s in pallas. 
+
+When encoding a transaction body, if the collateral inputs, reference inputs,
+certs, withdrawals, required signers, or mint is empty, it is omitted. However,
+when decoding, empty fields are permitted. So, for example, decoding and then
+re-encoding a tx body with a present but empty mint field will result in an
+newly encoded tx body with no mint field present.
+
+```
+pub enum GenTransactionOutput<'b, T>
+pub type TransactionOutput<'b> = GenTransactionOutput<'b, PostAlonzoTransactionOutput<'b>>
+```
+
+The cardano-ledger type `TxOut era` is an associated type of the class
+`EraTxOut`. For `BabbageEra`, this resolves to `BabbageTxOut BabbageEra`.
+
+decodeBabbageTxOut peeks at the first token. If it is the start of a definite or
+indefinite map, it is decoded using `decodeTxOut`; otherwise it is decoded using
+`oldTxOut`.
+  - `decodeTxOut` invokes SparseKeyed with an "empty" TxOut, mapping indices 0,
+    1, 2, 3 to fields address, value, datum, and script. The address is decoded
+    using `fromCborBothAddr`; the value (of type `Value era`) is decoded using
+    (`From`); the datum is decoded using `D decCBOR`; the script data is decoded
+    using `decodeCIC`. (What is the difference between `From` and `D`?)
+  - `oldTxOut` asserts that the next token is the start of a definite or
+    indefinite list. If the list doesn't have 2 or 3 elements, the decoder
+    fails. If the list has 2 elements, the decoder decodes an address (using
+    `fromCborBothAddr`) and then a value (using the decoder for `Value era`
+    described above. If the list has 3 elements, the decoder additionally
+    decodes a datum hash.
+  - the datum hash has type DataHash... which is a synonym for SafeHash, which
+    is a newtype for Hash.Hash HASH EraIndependentData that derives EncCBOR and
+    DecCBOR... in cardano-crypto-class there are ToCBOR and FromCBOR instances
+    for Hash h a... which essentially just convert to and from cbor bytes. The
+    decoder asserts that the encoded hash has the correct length.
+
+`fromCborBothAddr` is a little complicated
+- If the decoder version is at least 7 (i.e. babbage or later), we use
+  `decodeAddrRigorous`; otherwise, `fromCborBothBackwardsBothAddr`. The
+  difference between the two decoders is that the latter decoder permits
+  arbitrary extra garbage after the end of the address and permits certain
+  malformed stake reference pointers. Both decoders check that the length of the
+  decoded hashes have the correct length and that the header byte is valid.
+  - The bug where the pre-babbage decoder accepts malformed stake reference
+    pointers has to do with the encoding of the pointer fields. The fields of
+    the pointers are integers encoded as variable-length sequences of 7-bit
+    chunks. However, the integer values of the fields must not be greater than
+    32 bits, 16 bits, and 16 bits respectively. The old decoder does not
+    actually limit the size of the encoded integer; it simply accumulates the
+    chunks and truncates the result to 64 bits.
+
+The pallas implementation just treats addresses as bytes. In particular, it does
+not validate that the byte sequence corresponds to a well-formed cardano
+address.
+
+
+
+```
+pub struct WitnessSet
+```
+
+See notes on the conway WitnessSet. The cardano-ledger type is the same except
+for the era parameter. The decoder will reject v3 scripts in babbage since it
+will check the version.  However, the pallas decoder via #[cbor(map)] will
+simply ignore unknown fields so it will allow witness sets that supply v3
+scripts (and simply ignore that field), unlike cardano-ledger.
+
+
+
+```
+pub struct PostAlonzoAuxiliaryData
+```
+
+See notes on the conway PostAlonzoAuxiliaryData. Like with WitnessSet, this
+probably just allows and ignores plutus V3 fields whereas cardano-ledger
+will reject any record that has one.
+
+
+
+```
+pub enum DatumOption<'b>
+```
+
+Confusingly, this has only the variants Hash and Data, whereas the cardano-ledger
+type `data Datum era` also has a NoDatum variant. However, it is impossible to
+decode or encode a NoDatum (the encoder uses OmitC and the decoder uses
+Invalid). So I believe this is equivalent to the pallas schema where the
+`datum_option` field of the txout type is an `Option<DatumOption>`.
+
+
+
+```
+pub enum ScriptRef
+```
+
+Like WitnessSet and PostAlonzoAuxiliaryData, the corresponding cardano-ledger
+type is the same in multiple eras and the plutus script fields are checked
+against the protocol version in the decoder context. So I believe the
+cardano-ledger type will reject plutus V3 script fields here, whereas pallas
+will accept (and ignore) them.
+
+
+
+```
+pub struct Block
+```
+
+Basically the same as the conway Block since `TxSeq era` in both eras resolves
+to `AlonzoTxSeq`.
 
 ### pallas-primitives/src/alonzo/model.rs
 
@@ -707,44 +912,4 @@ pub struct TransactionOutput {
 }
 ```
 
-So `TxOut era` is an associated type of the class `EraTxOut`. For `ConwayEra`
-this resolves to `BabbageTxOut ConwayEra`.
-
-decodeBabbageTxOut peeks at the first token. If it is the start of a definite or
-indefinite map, it is decoded using `decodeTxOut`; otherwise it is decoded using
-`oldTxOut`.
-  - `decodeTxOut` invokes SparseKeyed with an "empty" TxOut, mapping indices 0,
-    1, 2, 3 to fields address, value, datum, and script. The address is decoded
-    using `fromCborBothAddr`; the value (of type `Value era`) is decoded using
-    (`From`); the datum is decoded using `D decCBOR`; the script data is decoded
-    using `decodeCIC`. (What is the difference between `From` and `D`?)
-  - `oldTxOut` asserts that the next token is the start of a definite or
-    indefinite list. If the list doesn't have 2 or 3 elements, the decoder
-    fails. If the list has 2 elements, the decoder decodes an address (using
-    `fromCborBothAddr`) and then a value (using the decoder for `Value era`
-    described above. If the list has 3 elements, the decoder additionally
-    decodes a datum hash.
-  - the datum hash has type DataHash... which is a synonym for SafeHash, which
-    is a newtype for Hash.Hash HASH EraIndependentData that derives EncCBOR and
-    DecCBOR... in cardano-crypto-class there are ToCBOR and FromCBOR instances
-    for Hash h a... which essentially just convert to and from cbor bytes. The
-    decoder asserts that the encoded hash has the correct length.
-
-`fromCborBothAddr` is a little complicated
-- If the decoder version is at least 7, we use `decodeAddrRigorous`; otherwise,
-  `fromCborBothBackwardsBothAddr`. The difference between the two decoders is
-  that the latter decoder permits arbitrary extra garbage after the end of the
-  address and permits certain malformed stake reference pointers. Both decoders
-  check that the length of the decoded hashes have the correct length and that
-  the header byte is valid.
-  - The bug where the pre-babbage decoder accepts malformed stake reference
-    pointers has to do with the encoding of the pointer fields. The fields of
-    the pointers are integers encoded as variable-length sequences of 7-bit
-    chunks. However, the integer values of the fields must not be greater than
-    32 bits, 16 bits, and 16 bits respectively. The old decoder does not
-    actually limit the size of the encoded integer; it simply accumulates the
-    chunks and truncates the result to 64 bits.
-
-The pallas implementation just treats addresses as bytes. In particular, it does
-not validate that the byte sequence corresponds to a well-formed cardano
-address.
+todo
