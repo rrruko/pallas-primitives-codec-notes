@@ -896,8 +896,6 @@ version fields are flattened in the struct using EncCBORGroup/DecCBORGroup...
 
 
 
-
-
 ```
 #[derive(Serialize, Deserialize, Encode, Decode, Debug, PartialEq, Eq, Clone)]
 pub struct TransactionOutput {
@@ -912,4 +910,139 @@ pub struct TransactionOutput {
 }
 ```
 
-todo
+This is `data AlonzoTxOut era` which is represented as a list of length 2 or 3
+depending on the presence of the datum hash.
+
+
+
+```
+pub enum InstantaneousRewardSource {
+```
+
+This is `data MIRPot` which is represented as a 0 or a 1.
+
+```
+pub enum InstantaneousRewardTarget {
+```
+
+This is `data MIRTarget c`. The decoder checks if the first token is a map, then
+decodes a `StakeAddressesMIR`; otherwise, it decodes as a
+`SendToOppositePotMIR`. 
+
+```
+pub struct MoveInstantaneousReward {
+```
+
+This is `data MIRCert c` which is just a record of a `MIRPot` and a `MIRTarget
+c`.
+
+
+
+```
+pub enum Certificates
+```
+
+In Alonzo era the type for TxCert is `ShelleyTxCert`:
+
+```
+-- | A heavyweight certificate.
+data ShelleyTxCert era
+  = ShelleyTxCertDelegCert !(ShelleyDelegCert (EraCrypto era))
+  | ShelleyTxCertPool !(PoolCert (EraCrypto era))
+  | ShelleyTxCertGenesisDeleg !(GenesisDelegCert (EraCrypto era))
+  | ShelleyTxCertMir !(MIRCert (EraCrypto era))
+  deriving (Show, Generic, Eq, Ord, NFData)
+```
+
+All certs are encoded as lists with an integer discriminator in the first field.
+The deleg cert types are tagged 0-2; the pool cert types are tagged 3-4; the
+genesis deleg cert is tagged 5; and the mir cert is tagged 6. The decoder fails
+when the tag is not valid.
+
+
+
+```
+pub enum Language
+```
+
+In alonzo there is only PlutusV1 which is encoded as `0`. The decoder will fail
+when encountering other language versions.
+
+
+
+```
+pub struct ProtocolParamUpdate
+```
+
+The name of the field `ada_per_utxo_byte` here is inconsistent with the name of
+the corresponding field in `AlonzoPParams`, which is `appCoinsPerUTxOWord`. iirc
+after Alonzo this parameter was changed from per-word to per-byte, so the pallas
+name might be wrong.
+
+
+
+```
+pub struct Update
+```
+
+See notes on the equivalent babbage type.
+
+
+
+```
+pub struct TransactionBody
+```
+
+uses SparseKeyed to decode the cbor map. This will not fail if unknown map keys
+are encountered. Fields 0, 1, and 2 are required. The map may be definite or
+indefinite.
+
+
+
+```
+pub struct VKeyWitness
+```
+
+This is `data WitVKey kr c`. The key is of type `VKey kr c` and the signature is
+of type `SignedDSIGN c (Hash c EraIndependentTxBody)`. The decoders for these
+types perform size checks.
+
+
+
+```
+pub enum NativeScript
+```
+
+In Alonzo this is `data TimelockRaw era`. Timelock is the type for native
+scripts after allegra era where the TimeStart and TimeExpire primitives were
+introduced. There is a comment mentioning that the integer in the M-of-N
+primitive may be negative in which case that clause always evaluates to true; in
+pallas we use an unsigned integer which is not consistent.
+
+
+
+```
+pub enum RedeemerTag
+pub struct Redeemer
+pub struct RedeemerPointer
+```
+
+See notes on `Redeemers` in conway.
+
+
+
+```
+pub struct BootstrapWitness
+```
+
+Corresponds to `data BootstrapWitness c`. The haskell decoder verifies the
+length of the key and signature fields, but the chain code field and the
+attributes field are both simple byte arrays.
+
+
+
+```
+pub struct WitnessSet<'b>
+```
+
+
