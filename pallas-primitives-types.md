@@ -533,12 +533,19 @@ backwards-compatible:
   fails (via guardPlutus) if the map contians plutus scripts for versions that
   are not legal in this era.
 
+However, this type definition is not actually used. It does not appear in the
+types of the auxiliary data fields of conway::Tx or conway::Block; instead,
+AuxiliaryData from the alonzo module is imported and used there. This is wrong
+because the alonzo type does not support plutus scripts after v1. Also, this
+unused PostAlonzoAuxiliaryData type is missing the 259 tag.
+
 Properties that should be tested:
 - Pallas decoder supports all formats
 - Each format supports definite and indefinite
 - Alonzo format expects tag
 - All alonzo format fields are optional
 - Plutus script map fields may be present but empty
+
 
 
 
@@ -851,6 +858,10 @@ See notes on the conway PostAlonzoAuxiliaryData. Like with WitnessSet, this
 probably just allows and ignores plutus V3 fields whereas cardano-ledger
 will reject any record that has one.
 
+Like the corresponding conway type, the pallas type is unused and
+alonzo::AuxiliaryData is used instead. Also like the corresponding conway type,
+this type is missing the minicbor decorator to expect a "259" cbor tag.
+
 
 
 ```
@@ -1045,4 +1056,108 @@ attributes field are both simple byte arrays.
 pub struct WitnessSet<'b>
 ```
 
+See notes on the conway WitnessSet. The cardano-ledger type is the same except
+for the era parameter. The decoder will reject v2 and v3 scripts in alonzo since
+it will check the version.  However, the pallas decoder via #[cbor(map)]
+will simply ignore unknown fields so it will allow witness sets that supply
+v3 scripts (and simply ignore that field), unlike cardano-ledger.
 
+
+
+```
+pub struct PostAlonzoAuxiliaryData
+```
+
+See notes on the conway PostAlonzoAuxiliaryData. Like with WitnessSet, this
+probably just allows and ignores plutus V3 fields whereas cardano-ledger
+will reject any record that has one.
+
+Note the alonzo-exclusive 259 cbor tag here.
+
+
+
+```
+pub struct ShelleyMaAuxiliaryData
+```
+
+The haskell node decoder for this type is covered in the conway PostAlonzoAuxiliaryData notes. 
+
+
+
+```
+pub enum AuxiliaryData
+codec_by_datatype!{ ... }
+```
+
+The corresponding haskell decoder matches pretty closely; it checks the type of
+the first token and chooses a variant as described in the conway notes on
+PostAlonzoAuxiliaryData.
+
+
+
+```
+pub struct Block<'b>
+```
+
+Basically the same as the conway Block since `TxSeq era` in both eras resolves
+to `AlonzoTxSeq`.
+
+
+
+```
+pub struct Tx
+```
+
+This is pretty trivial.
+
+
+### pallas-primitives/src/byron/model.rs
+
+
+
+```
+pub struct SlotId
+```
+
+todo
+
+
+
+```
+pub struct Tx
+```
+
+This is `data Tx` from `Cardano.Chain.UTxO.Tx`. The haskell type has NonEmpty
+inputs and outputs fields (pallas implementation does not enforce NonEmpty). The
+haskell decoder ultimately calls `decodeListWith` which requires an indefinite
+list length encoding, so the pallas implementation is correct to expect that.
+The `TxAttributes` field is `Attributes ()`. The `Attributes` type has a field
+for "unparsed attributes" in which all attributes are stored. So, strictly
+speaking, an encoded Tx can have "unparsed" attributes and roundtrip through
+the `Tx` type without losing its attributes.  The pallas implementation,
+meanwhile, discards all attributes.
+
+
+
+
+```
+pub struct Block
+```
+
+This is `data ABlock a` from `cardano-ledger-byron:Cardano.Chain.Block.Block`.
+There is an "extra" field here, which `encCBORBlock` always serializes as a list
+of length 1 containing an empty map. `decCBORABlock` depends on an argument
+`epochSlots` which is passed to `decCBORAHeader`. It enforces that the size of
+the extra field is a list of length 1 and then calls dropEmptyAttributes, which
+enforces that the following map is empty. In other words, the encoder and
+decoder here enforce that the third field of the block is always `[{}]`. (Also,
+since `decodeMapLen` is used in the decoder to check the map length, the empty
+map cannot be indefinite-length). However, the pallas decoder for EmptyMap is
+just `d.skip()?; Ok(EmptyMap)`, meaning that it will accept any input
+whatsoever, rather than enforcing that an empty map is actually present like the
+haskell node.
+
+All of the types here in cardano-ledger have a pair of alternate encoders and
+decoders, depending on whether we want to "take the deprecated epoch boundary
+blocks into account". Pallas instead duplicates all of the relevant types with a
+"Eb" version and a normal version.
