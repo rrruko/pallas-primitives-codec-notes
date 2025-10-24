@@ -1119,7 +1119,13 @@ This is pretty trivial.
 pub struct SlotId
 ```
 
-todo
+This corresponds to `EpochAndSlotCount`. Its fields are `EpochNumber` and
+`SlotCount`. These are both simple wrappers for Word64. The decoder uses
+`enforceSize`.
+
+
+
+...
 
 
 
@@ -1139,11 +1145,191 @@ meanwhile, discards all attributes.
 
 
 
+...
+
+
+
+```
+pub type VssEnc = MaybeIndefArray<ByteVec>;
+```
+
+todo
+
+
+
+```
+pub type VssDec = ByteVec;
+```
+
+See note on Ssc. This is the type of the list items of the values of the "InnerSharesMap".
+
+
+```
+pub type VssProof
+```
+
+The decoder for this type is defined by `dropSecretProof`, which calls
+`enforceSize 4` and then decodes three bytestrings followed by a list of
+bytestrings.
+
+
+
+```
+pub type SscComm
+```
+
+The decoder for this type is defined by
+`dropSignedCommitment = dropTriple dropBytes dropCommitment dropBytes`.
+`dropCommitment` calls `enforceSize 2` and then decodes a map from bytestrings to list
+of bytestrings, and then decodes a "SecretProof" (See VssProof).
+
+
+
+```
+pub enum SscCert
+pub enum SscCerts
+```
+
+This corresponds to the decoder `dropVssCertificatesMap`, which expects a set of
+"VssCertificate" records. The "VssCertificate" record decoder calls `enforceSize
+4` and then expects a bytestring, a word64, and then two more bytestrings.
+`dropSet` expects a tag but does not actually enforce that its value is 258. it
+also enforces that the list is definite-length.
+
+
+
+```
+pub type SscComms
+pub type SscOpens
+pub type SscShares
+pub enum Ssc
+```
+
+The decoder uses `dropSscPayload`. It calls `decodeListLen` so the enclosing
+array must be definite. The variants are just named Variant0 through Variant3 in
+pallas but in the haskell code they are named CommitmentsPayload,
+OpeningsPayload, SharesPayload, and CertificatesPayload, respectively. The last
+field of each variant is decoded with `dropVssCertificatesMap`. The other
+variants have contents of different types:
+- 0 ("CommitmentsPayload"): Expects a set of "SignedCommitment", which is a
+  triple of (bytes, Commitment, bytes) (see SscComm for Commitment codec).
+- 1 ("OpeningsPayload"): Expects a map from bytestrings to bytestrings.
+- 2 ("SharesPayload"): Expects a map from bytestrings to "InnerSharesMap"; the latter
+  is a map from bytestrings to list of bytestrings.
+
+
+
+```
+pub enum SscProof
+```
+
+The decoder uses `dropSscProof`. It calls `decodeListLen` so the enclosing array
+must be definite. The variants are just named Variant0 through Variant3 in
+pallas but in the haskell code they are named CommitmentsProof,
+OpeningsProof, SharesProof, and CertificatesProof, respectively. Every field of
+each variant is decoded with `dropBytes`; there is no length check, even though
+the pallas type uses `ByronHash` which has an expected length.
+
+
+
+```
+pub struct Dlg
+```
+
+This corresponds to `data ACertificate a`. The PubKey fields and Signature field
+should have their lengths checked.
+
+
+
+```
+pub type DlgSig = (Dlg, Signature);
+```
+
+This corresponds to the extant fields of `data ABlockSignature a`;
+`Delegation.ACertificate a` and `Signature ToSign`.
+
+
+
+```
+pub struct Lwdlg
+pub type LwdlgSig = (Lwdlg, Signature);
+```
+
+This is for the tag-1 "light" variant of BlockSig which was removed in the
+haskell node.
+
+
+
+```
+pub type BVer
+```
+
+This is `data ProtocolVersion`. Uses `enforceSize 3`.
+
+
+
+```
+pub enum TxFeePol
+```
+
+This is `data TxFeePolicy`. The decoder uses `enforceSize 2` and then decodes a
+u8 discriminator, which must be 0. Then it decodes a TxSizeLinear using
+`decodeKnownCborDataItem`. The DecCBOR instance for TxSizeLinear calls
+`enforceSize 2` and then decodes two fields of type Nano. The first field is
+processed with `wrapLovelaceError . mkLovelace . round` and the second field is
+processed with `toRational`. The former function fails if `mkLovelace` fails,
+which happens when its Word64 argument exceeds the maximum lovelace value
+(45e15). 
+
+The DecCBOR instance for Nano is derived via newtype; Fixed is a newtype for
+Integer, so it supports arbitrary-size integers. Calling `round` on a value of
+type Nano first converts it to an arbitrary-precision rational and then rounds
+it to the nearest integer. So the decoder will fail if the first integer,
+treated as a fixed-precision integer with a precision of 10^-9 and rounded up,
+exceeds 45e15.
+
+
+
+```
+pub struct BVerMod
+```
+
+This is `data ProtocolParametersUpdate`. Every field is `Maybe` in the haskell
+type. The haskell decoder calls `enforceSize 14` and then calls `decCBOR` for
+each field. Since the default decoder for `Maybe` matches `ZeroOrOneArray`, the
+pallas type seems to be correct.
+
+Many of these fields are `Natural` in the haskell code, but use `u64` in the
+pallas type. The `Natural` decoder uses `decodeInteger`, which supports
+big ints, so using u64 here is too restrictive.
+
+
+
+```
+pub type UpData = (ByronHash, ByronHash, ByronHash, ByronHash);
+```
+
+This correspodns to `InstallerHash`. The decoder calls `enforceSize 4` and then
+calls `dropBytes` on the 1st, 3rd, and 4th fields. It calls `decCBOR` on the
+2nd field.
+
+
+
 ```
 pub struct UpProp
 ```
 
-todo
+This corresponds to `AProposal`. Uses `enforceSize 7`. All fields are decoded
+using `decCBOR` except that the attributes are decoded with
+`dropEmptyAttributes`, so the attributes must be a definite map of length 0. The
+`from` and `signature` fields are checked for correct length.
+
+The `data` field corresponds to `Map SystemTag InstallerHash`. SystemTag is just
+a string. The `InstallerHash` corresponds to the pallas type `UpData`.
+
+According to a comment in the pallas type definition, a CDDL document claims
+that the `data` field has a 258 tag wrapper. I don't see evidence of this in the
+haskell decoders.
 
 
 
