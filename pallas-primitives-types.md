@@ -714,7 +714,7 @@ pub struct HeaderBody
 I think this corresponds to `data HeaderBody crypto` in ouroboros-consensus
 [here](https://github.com/IntersectMBO/ouroboros-consensus/blob/0107b1e9200ee7d46ce769d85fcfff6e7708c793/ouroboros-consensus-protocol/src/ouroboros-consensus-protocol/Ouroboros/Consensus/Protocol/Praos/Header.hs#L84).
 
-Codecs are pretty staightforward (`encode $ Rec` and `decode $ RecD`). `mapCoder unCBORGroup From` is used for the ocert field. 
+Codecs are pretty staightforward (`encode $ Rec` and `decode $ RecD`). `mapCoder unCBORGroup From` is used for the ocert field.
 
 
 
@@ -722,7 +722,7 @@ Codecs are pretty staightforward (`encode $ Rec` and `decode $ RecD`). `mapCoder
 pub struct OperationalCert
 ```
 
-Typical "record" codec. 
+Typical "record" codec.
 
 
 
@@ -781,7 +781,7 @@ pub struct TransactionBody<'b> {
 ```
 
 The inputs, collateral inputs, reference inputs, and required signers are all
-`Set`s in cardano-ledger but `Vec`s in pallas. 
+`Set`s in cardano-ledger but `Vec`s in pallas.
 
 When encoding a transaction body, if the collateral inputs, reference inputs,
 certs, withdrawals, required signers, or mint is empty, it is omitted. However,
@@ -938,7 +938,7 @@ pub enum InstantaneousRewardTarget {
 
 This is `data MIRTarget c`. The decoder checks if the first token is a map, then
 decodes a `StakeAddressesMIR`; otherwise, it decodes as a
-`SendToOppositePotMIR`. 
+`SendToOppositePotMIR`.
 
 ```
 pub struct MoveInstantaneousReward {
@@ -1080,7 +1080,7 @@ Note the alonzo-exclusive 259 cbor tag here.
 pub struct ShelleyMaAuxiliaryData
 ```
 
-The haskell node decoder for this type is covered in the conway PostAlonzoAuxiliaryData notes. 
+The haskell node decoder for this type is covered in the conway PostAlonzoAuxiliaryData notes.
 
 
 
@@ -1140,10 +1140,138 @@ meanwhile, discards all attributes.
 
 
 ```
+pub struct UpProp
+```
+
+todo
+
+
+
+```
+pub struct UpVote
+```
+
+This is `AVote a`. The decoder uses `enforceSize 4`. `decCBOR` is used for all
+fields. Pallas uses PubKey for the voter field and Signature for the siganture
+field which are synonyms for ByteVec; however, the decoders for these types
+require the correct length (64 bytes for both). The size of the UpdId field is
+also checked, though the pallas implementation already defines that type as
+Hash<32>.
+
+
+
+```
+pub struct Up
+```
+
+This is `Update.APayload a`. Uses `enforceSize 2` for the wrapper array. The
+proposal field is `Maybe (AProposal a)`  and the votes field is `[AVote a]`. The
+default decoder for `Maybe` is used, which uses `decodeMaybeExactLen` when the
+protocol version is less than 2. This decoder expects a definite list length of
+0 or 1. Pallas's `ZeroOrOneArray` type is correct here (it does not accept
+indefinite length arrays).
+
+
+
+```
+pub type Difficulty = MaybeIndefArray<u64>;
+```
+
+The decoder for ChainDifficulty in the haskell node calls enforceSize 1, so the
+array is actually required to be of length 1.
+
+
+
+```
+pub enum BlockSig
+```
+
+This is `ABlockSignature a`. The haskell codec acknowledges that this type used
+to be an enum, with tag 0 used for "BlockSignature" and tag 1 used for
+"BlockPSignatureLight". However, now it only accepts the tag-2 variant.
+`enforceSize 2` is used for both the outer and inner arrays. The two fields of
+the tag-2 variant are `Delegation.ACertificate a` and `Signature ToSign`.
+
+
+
+```
+pub struct BlockCons
+```
+
+This is decoded inline in `decCBORAHeader`, the decoder for `BlockHead` in the
+haskell node. decCBOR or decCBORAnnotated is used for all fields. `enforceSize`
+is used to ensure that the enclosing array is definite and of length 4.
+
+
+
+```
+pub struct BlockHeadEx
+```
+
+This record uses enforceSize (so the array must be definite). `decCBOR` is used
+for the first two fields and `dropEmptyAttributes` and `dropBytes` are used for
+the third and fourth fields. `dropEmptyAttributes` enforces that the
+attributes is a definite map of length 0, and `dropBytes` enforces that the
+field is a bytestring. The pallas type uses an Option wrapper for the third
+field (the attributes), which does not appear to correspond to the haskell
+codec.
+
+
+
+```
+pub struct BlockProof
+```
+
+This corresponds to `Proof`. This is a trivial decoder that uses `decCBOR` for
+all fields and calls enforceSize (so the enclosing array must be definite and of
+length 4).
+
+
+
+
+```
+pub struct BlockHead
+```
+
+`decCBORAHeader` uses enforceSize so the enclosing array must be definite. It
+uses decCBORAnnotated for the first three fields of the encoded record (in the
+pallas record, these are the `protocol_magic`, `prev_block`, and `body_proof`
+fields). The `consensus_data` is a record of length 4 (enforceSize is used here
+as well) that uses decCBOR or decCBORAnnotated for all fields. The final field,
+which corresponds to `BlockHeadEx` in the pallas module, is decoded with
+`decCBORBlockVersions`, which corresponds to `BlockHeadEx`.
+
+The fields of the sub-records and the memoized bytes decoded here are flattened
+into the `AHeader` type so that the haskell type definition does not closely
+resemble `BlockHead`.
+
+
+
+```
 pub type Witness = MaybeIndefArray<Twit>;
 ```
 
-The haskell node type is `type TxWitness = Vector TxInWitness`.
+The haskell node type is `type TxWitness = Vector TxInWitness`. The `FromCBOR
+(Vector.Vector a)` instance in cardano-binary is kind of complicated...
+
+First it calls decodeListLen (enforcing a definite list). Then it peeks at the
+remaining (?) size of the decoder input. If the list length is not greater than
+the remaining size, we just call `replicateM fromCBOR`. Otherwise, some kind of
+chunking is performed, which, according to a comment, is intended to protect
+against a DOS attack. This is confusing to me because it seems like if the
+declared size of the list exceeds the number of remaining bytes of the input, we
+should be able to simply abort the decoder, because there is no way that the
+CBOR can be valid.
+
+(There is a property test for this logic, which does not actually perform any
+generation; instead, it simply asserts that a specific array of the null token
+repeated 4097 times is successfully decoded. I don't think that this test can
+exercise the chunking logic since the size of the buffer in this case would be
+4097 plus the representation of the list length.)
+
+Anyway, as long as the cbor is well-formed, the vector decoder will simply
+be equivalent to `decodeListLen *> replicateM fromCBOR`. Strictly speaking, the
+pallas type should not allow the array to be indefinite.
 
 
 
