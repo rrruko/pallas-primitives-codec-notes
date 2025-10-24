@@ -1125,7 +1125,44 @@ This corresponds to `EpochAndSlotCount`. Its fields are `EpochNumber` and
 
 
 
-...
+```
+pub type Attributes = EmptyMap;
+```
+
+It's not strictly correct for this type to be defined as EmptyMap; see mentions
+of Attributes in following notes.
+
+
+
+```
+pub struct Address
+```
+
+This corresponds to `data Address` which is decoded using `decodeCrcProtected`.
+First, `enforceSize 2` is called.  The "body" is decoded as nested cbor. Then
+the expected crc is decoded as a Word32. The decoder computes the actual crc of
+the address and fails if the expected crc does not match. Then the bytes of the
+nested cbor are decoded as a triple `(AddressHash Address', Attributes
+AddrAttributes, AddrType)`.
+
+
+
+```
+pub struct TxOut
+```
+
+This corresponds to `data TxOut` in the haskell code. The decoder uses
+`enforceSize 2`. The fields are of type `Address` and `Lovelace`. 
+
+
+
+```
+pub struct TxIn
+```
+
+This corresponds to `data TxIn` in the haskell code. The decoder uses
+`enforceSize 2` and then decodes a Word8 discriminator, which must be 0. Then a
+(TxId, Word16) pair is decoded as nested cbor.
 
 
 
@@ -1145,7 +1182,58 @@ meanwhile, discards all attributes.
 
 
 
-...
+```
+pub type TxProof
+```
+
+This corresponds to `TxProof` in the haskell code. The decoder uses `enforceSize
+3` and then calls decCBOR for each field. The fields are `Word32`, `MerkleRoot
+Tx`, and `Hash [TxWitness]`. MerkleRoot is a newtype wrapper for `Hash Raw`.
+`Hash` is a synonym for `AbstractHash Blake2b_256`.
+
+
+
+```
+pub type ValidatorScript 
+pub type RedeemerScript
+```
+
+These correspond to the unused tag-1 variant of `TxInWitness`.
+
+
+
+```
+pub enum Twit
+```
+
+This corresponds to `data TxInWitness`. The decoder expects a definite length
+array and then decodes a Word8 discriminator which must be 0 ("VKWitness") or 2
+("RedeemWitness"). The decoder does not support tag 1 ("ScriptWitness") or
+unknown tags, unlike the pallas implementation.
+
+In both cases, the content is decoded with `decodeKnownCborDataItem` which
+expects nested cbor. In the tag 0 case, the decoded item is (VerificationKey,
+TxSig); in the tag 2 case, the decoded item is (RedeemVerificationKey,
+RedeemSignature TxSigData). The VerificationKey decoder checks that the length
+is correct. TxSig is a wrapper for Cardano.Crypto.Signature and RedeemSignature
+is a wrapper for Ed25519.Signature; the decoders for these types check their
+lengths.
+
+
+
+```
+pub type VssPubKey = ByteVec;
+```
+
+This is the type of the map key in `dropCommitment` (See note on SscComm).
+
+
+
+```
+pub type VssSec = ByteVec;
+```
+
+This is the value type of OpeningsPayload (see note on Ssc).
 
 
 
@@ -1153,7 +1241,8 @@ meanwhile, discards all attributes.
 pub type VssEnc = MaybeIndefArray<ByteVec>;
 ```
 
-todo
+This is the type of the "list of bytestrings" in `dropCommitment` (See
+note on SscComm).
 
 
 
@@ -1181,7 +1270,7 @@ pub type SscComm
 The decoder for this type is defined by
 `dropSignedCommitment = dropTriple dropBytes dropCommitment dropBytes`.
 `dropCommitment` calls `enforceSize 2` and then decodes a map from bytestrings to list
-of bytestrings, and then decodes a "SecretProof" (See VssProof).
+of bytestrings (See VssEnc), and then decodes a "SecretProof" (See VssProof).
 
 
 
@@ -1434,7 +1523,7 @@ resemble `BlockHead`.
 
 
 ```
-pub type Witness = MaybeIndefArray<Twit>;
+pub type Witnesses = MaybeIndefArray<Twit>;
 ```
 
 The haskell node type is `type TxWitness = Vector TxInWitness`. The `FromCBOR
