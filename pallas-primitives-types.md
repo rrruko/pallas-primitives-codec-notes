@@ -1139,6 +1139,62 @@ meanwhile, discards all attributes.
 
 
 
+```
+pub type Witness = MaybeIndefArray<Twit>;
+```
+
+The haskell node type is `type TxWitness = Vector TxInWitness`.
+
+
+
+```
+pub struct TxPayload
+```
+
+This is named after `newtype ATxPayload a` which is a newtype wrapper for
+`[ATxAux a]`. But the pallas type actually corresponds to the element type of
+this list, i.e. `ATxAux a`, which is decoded as a length-2 record of a `Tx` and a
+`TxWitness` (enforceSize is used so the enclosing array must be definite).
+
+
+
+```
+pub struct BlockBody
+```
+
+Straightforward decoder (uses decCBOR for each field). Uses enforceSize, so the
+enclosing array must be definite.
+
+
+
+```
+pub struct EbbCons
+```
+
+Simple record of EpochId (i.e. u64) and Difficulty (i.e. MaybeIndefArray<u64>).
+The decoder for ChainDifficulty in the haskell node calls enforceSize 1, so the
+array is actually required to be of length 1.
+
+
+
+```
+pub struct EbbHead
+```
+
+This is the header field of `ABoundaryBlock` (i.e. `ABoundaryHeader`). The
+decoder drops the protocol magic, then decodes a header hash, then decodes and
+discards the bytestring representing the "boundary block proof", then decodes
+the "EbbCons" using `decCBORBoundaryConsensusData`, then calls
+`dropBoundaryExtraHeaderDataRetainGenesisTag`. This last field is a nonempty
+attributes map (i.e. a list of length 1 containing a map of word8 to
+bytestring). The attributes map is decoded into a Bool as follows: if the map
+contains the key-value pair (255, "Genesis"), then the value is True; otherwise,
+the value is False. If this computation results in True, then the header hash is
+tagged as a GenesisHash; otherwise, it is a HeaderHash. The pallas decoder
+simply treats the header hash as a Blake2b256 hash and ignores the value of the
+attributes map.
+
+
 
 ```
 pub struct Block
@@ -1161,3 +1217,17 @@ All of the types here in cardano-ledger have a pair of alternate encoders and
 decoders, depending on whether we want to "take the deprecated epoch boundary
 blocks into account". Pallas instead duplicates all of the relevant types with a
 "Eb" version and a normal version.
+
+
+
+```
+pub struct EbBlock
+```
+
+This corresponds to `data ABoundaryBlock a`. The decoder for this type is
+`decCBORABoundaryBlock`. Both the body and extra fields are decoded by
+`decCBORABoundaryBody`, which enforces their structure using `dropBoundaryBody`
+and `dropBoundaryExtraBodyData` and returns a value of type `ABoundaryBody
+ByteSpan`. The `dropBoundaryBody` decoder enforces an indefinite list of byte
+strings. `dropBoundaryExtraBodyData` decodes a definite list of length 1
+containing a map of word8 to bytestring.
