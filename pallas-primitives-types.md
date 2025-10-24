@@ -1634,3 +1634,135 @@ and `dropBoundaryExtraBodyData` and returns a value of type `ABoundaryBody
 ByteSpan`. The `dropBoundaryBody` decoder enforces an indefinite list of byte
 strings. `dropBoundaryExtraBodyData` decodes a definite list of length 1
 containing a map of word8 to bytestring.
+
+
+
+### pallas-primitives/src/lib.rs
+
+
+
+```
+pub struct ExUnits
+```
+
+The `DecCBOR` instance for `ExUnits` decodes two arbitrary-size non-negative
+integers but the decoder then fails if these integers exceed the maximum value
+of a 64-bit signed integer.
+
+
+
+```
+pub struct ExUnitPrices
+```
+
+In the haskell code, the fields of `Prices` have type `NonNegativeInterval`,
+which is simply a newtype for `BoundedRatio NonNegativeInterval Word64`. The
+`DecCBOR` for this type calls `decodeRationalWithTag` and then checks that the
+rational is within the bounds (0, maxBound @Word64). `decodeRationalWithTag`
+expects tag 30 and then decodes a definite or indefinite list of two integers.
+The decoder fails if the denominator is zero.
+
+
+
+```
+pub enum Metadatum
+```
+
+The decoder `decodeMetadatum` peeks at the token type:
+- CBOR tokens representing integers -2^64-1 to 2^64-1 are decoded as
+  decodeInteger. (Metadatum does not support big ints).
+- Bytestrings: decoded as Metadatum bytestring.
+- Strings: decoded as Metadatum strings.
+- Lists: decoded as Metadatum lists.
+- Maps: decoded as Metadatum maps.
+The decoder supports both definite and indefininte representations.
+
+
+
+```
+pub enum NetworkId
+```
+
+This corresponds to `data Network`. This is a word8 tag: 0 for testnet, 1 for
+mainnet.
+
+
+
+```
+pub struct Nonce
+```
+
+This corresponds to `data Nonce`. The decoder expects either a singleton list [0], representing "NeutralNonce", or a list [1, hash] where hash is a blake2b_256 hash.
+
+
+
+```
+pub struct PlutusScript
+```
+
+This type is used for the plutus script fields of WitnessSet and
+PostAlonzoAuxiliaryData and ScriptRef. ScriptRef and the WitnessSet fields
+correspond to `Script era` which resolves to `AlonzoScript era`. In
+`AlonzoTxAuxDataRaw` the plutus scripts have type `PlutusBinary`. In either
+case, the script is just treated as a byte string.
+
+
+
+```
+pub struct PoolMetadata
+```
+
+Corresponds to `data PoolMetadata`. Trivial decoder.
+
+
+
+```
+pub struct RationalNumber
+```
+
+This is used for ExUnitPrices and for the pool pledge influence field of pparam
+update. As a field of ExUnitPrices, it is decoded using `decodeRationalWithTag`,
+which requires a '30' cbor tag and then decodes a definite or indefinite list of
+two integers, failing if the denominator is zero. The pool pledge influence
+field has type NonNegativeInterval, which is a wrapper for BoundedRatio, which
+also is decoded using `decodeRationalWithTag`.
+
+
+
+```
+pub enum Relay
+```
+
+This corresponds to `StakePoolRelay`. The first field is an integer
+discriminator:
+- 0: The port, ipv4, and ipv6 fields are decoded using `decodeNullMaybe
+  decCBOR`.
+- 1: The port is decoded using `decodeNullMaybe decCBOR` and the DnsName is
+  decoded using `decCBOR`.
+- 2: The DnsName is decoded using `decCBOR`.
+
+Port is a wrapper for Word16.
+
+IPv4 is decoded using decodeIPv4, which decodes a bytestring and then decodes the contents of the bytestring as a 32-bit word. If the protocol version is at least 9, it fails if there is leftover data in the bytestring.
+
+IPv6 is decoded using decodeIPv6, which does the same thing as decodeIPv4 except
+that instead of decoding a 32-bit word it decodes four 32-bit words.
+
+
+
+```
+pub enum StakeCredential
+```
+
+This is `data Credential (kr :: KeyRole)`. As per the note in the pallas code,
+the key hash variant is tagged 0 and the script hash variant is tagged 1, but
+for the Ord instance the ScriptHash variant comes first.
+
+
+
+```
+pub struct TransactionInput
+```
+
+This is `data TxIn`. The fields have type TxId and TxIx. TxId is a wrapper for a
+hash type and TxIx is a wrapper for a Word16. However, the pallas type is u64.
